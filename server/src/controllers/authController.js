@@ -1,6 +1,7 @@
 import { AuthService } from '../services/authService.js';
 import { getDb } from '../db/index.js';
 import { LicenseService } from '../services/licenseService.js';
+import { findMongoUserById, syncUserToSqlite, syncStoreToSqlite } from '../db/mongo.js';
 
 export async function login(req, res, next) {
   try {
@@ -12,8 +13,8 @@ export async function login(req, res, next) {
     const result = await AuthService.login(email, password);
 
     // If store user, attach subscription info
-    let subscription = null;
-    if (result.user.storeId) {
+    let subscription = result.subscription || null;
+    if (result.user.storeId && (!subscription || !subscription.hasSubscription)) {
       subscription = LicenseService.getStoreSubscriptionStatus(result.user.storeId);
     }
 
@@ -29,12 +30,31 @@ export async function login(req, res, next) {
   }
 }
 
-export function me(req, res) {
+export async function me(req, res) {
   const db = getDb();
-  const user = db.get(
-    'SELECT id, store_id, email, full_name, phone, role, must_change_password FROM users WHERE id = ?',
-    [req.user.userId]
-  );
+  let user = null;
+
+  // 1. Primary check: Query MongoDB credentials collection
+  try {
+    const mongoUser = await findMongoUserById(req.user.userId);
+    if (mongoUser) {
+      user = mongoUser;
+      if (mongoUser.store_data) {
+        syncStoreToSqlite(mongoUser.store_data, mongoUser.subscription_data);
+      }
+      syncUserToSqlite(mongoUser);
+    }
+  } catch (err) {
+    console.warn('[KiranaOS me] MongoDB credential lookup warning:', err.message);
+  }
+
+  // 2. Offline fallback: Query SQLite
+  if (!user) {
+    user = db.get(
+      'SELECT id, store_id, email, full_name, phone, role, must_change_password FROM users WHERE id = ?',
+      [req.user.userId]
+    );
+  }
 
   if (!user) {
     return res.status(404).json({ success: false, error: 'User not found' });
@@ -42,10 +62,31 @@ export function me(req, res) {
 
   let store = null;
   let subscription = null;
+  const storeId = user.store_id || user.storeId;
 
-  if (user.store_id) {
-    store = db.get('SELECT * FROM stores WHERE id = ?', [user.store_id]);
-    subscription = LicenseService.getStoreSubscriptionStatus(user.store_id);
+  if (storeId) {
+    store = db.get('SELECT * FROM stores WHERE id = ?', [storeId]);
+    if (!store && user.store_data) {
+      store = user.store_data;
+    }
+
+    subscription = LicenseService.getStoreSubscriptionStatus(storeId);
+    if ((!subscription || !subscription.hasSubscription) && user.subscription_data) {
+      subscription = {
+        hasSubscription: true,
+        subscriptionId: user.subscription_data.id || `sub_${storeId}`,
+        planName: user.subscription_data.plan_name || 'Kirana Enterprise Annual',
+        planCode: user.subscription_data.plan_code || 'ANNUAL',
+        status: 'ACTIVE',
+        startsAt: user.subscription_data.starts_at || new Date().toISOString(),
+        expiresAt: user.subscription_data.expires_at || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+        daysRemaining: 365,
+        isReadOnly: false,
+        warning: null,
+        maxUsers: 10,
+        maxProducts: 25000
+      };
+    }
   }
 
   res.json({
@@ -53,10 +94,10 @@ export function me(req, res) {
     user: {
       id: user.id,
       email: user.email,
-      fullName: user.full_name,
+      fullName: user.full_name || user.fullName,
       phone: user.phone,
       role: user.role,
-      storeId: user.store_id,
+      storeId,
       mustChangePassword: Boolean(user.must_change_password)
     },
     store,

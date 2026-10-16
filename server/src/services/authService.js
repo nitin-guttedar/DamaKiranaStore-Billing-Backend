@@ -98,10 +98,32 @@ export class AuthService {
 
     const token = this.generateToken(user);
 
-    // Fetch store info if available from local disk storage
+    // Fetch store info if available from local disk storage or MongoDB user doc
     let store = null;
+    let subscription = null;
     if (user.store_id) {
       store = db.get('SELECT * FROM stores WHERE id = ?', [user.store_id]);
+      if (!store && user.store_data) {
+        store = user.store_data;
+      }
+
+      subscription = LicenseService.getStoreSubscriptionStatus(user.store_id);
+      if ((!subscription || !subscription.hasSubscription) && user.subscription_data) {
+        subscription = {
+          hasSubscription: true,
+          subscriptionId: user.subscription_data.id || `sub_${user.store_id}`,
+          planName: user.subscription_data.plan_name || 'Kirana Enterprise Annual',
+          planCode: user.subscription_data.plan_code || 'ANNUAL',
+          status: 'ACTIVE',
+          startsAt: user.subscription_data.starts_at || new Date().toISOString(),
+          expiresAt: user.subscription_data.expires_at || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+          daysRemaining: 365,
+          isReadOnly: false,
+          warning: null,
+          maxUsers: 10,
+          maxProducts: 25000
+        };
+      }
     }
 
     return {
@@ -119,8 +141,9 @@ export class AuthService {
         name: store.name,
         slug: store.slug,
         status: store.status,
-        gstin: store.gstin
-      } : null
+        gstin: store.gstin || null
+      } : null,
+      subscription
     };
   }
 

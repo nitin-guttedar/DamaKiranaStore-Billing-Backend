@@ -228,8 +228,29 @@ export async function createStore(req, res) {
       full_name: ownerName.trim(),
       phone: ownerPhone || null,
       role: 'STORE_OWNER',
-      must_change_password: 1,
-      is_active: 1
+      must_change_password: 0,
+      is_active: 1,
+      store_data: {
+        id: storeId,
+        name: storeName.trim(),
+        slug,
+        phone: ownerPhone || null,
+        email: normalizedEmail,
+        address: address || null,
+        city: city || 'Bengaluru',
+        state,
+        pincode: pincode || null,
+        gstin: gstin || null,
+        status: 'ACTIVE'
+      },
+      subscription_data: {
+        id: subscriptionId,
+        plan_id: plan.id,
+        plan_name: plan.name,
+        plan_code: plan.code,
+        starts_at: startsAt,
+        expires_at: expiresAt
+      }
     });
     console.log('[+] Persisted Store Owner login credentials to MongoDB Atlas:', normalizedEmail);
   } catch (mongoErr) {

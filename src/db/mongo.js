@@ -60,9 +60,66 @@ export async function getUsersCollection() {
 }
 
 /**
+ * Ensures store and default settings exist in SQLite before user insertion
+ * to satisfy SQLite FOREIGN KEY (store_id) REFERENCES stores(id).
+ */
+export function syncStoreToSqlite(storeData, subscriptionData) {
+  if (!storeData || !storeData.id) return;
+  try {
+    const db = getDb();
+    if (!db || typeof db.run !== 'function') return;
+
+    db.run(
+      `INSERT INTO stores (id, name, slug, phone, email, address, city, state, pincode, gstin, status, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 1)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name,
+         phone = COALESCE(excluded.phone, stores.phone),
+         email = COALESCE(excluded.email, stores.email),
+         status = 'ACTIVE',
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        storeData.id,
+        storeData.name || 'Kirana Store',
+        storeData.slug || `store-${storeData.id}`,
+        storeData.phone || null,
+        storeData.email || null,
+        storeData.address || null,
+        storeData.city || 'Bengaluru',
+        storeData.state || 'Karnataka',
+        storeData.pincode || null,
+        storeData.gstin || null
+      ]
+    );
+
+    db.run(
+      `INSERT INTO store_settings (id, store_id, invoice_prefix, next_invoice_number, receipt_printer_type, enable_gst, upi_name)
+       VALUES (?, ?, 'INV', 1, '58mm', 0, ?)
+       ON CONFLICT(id) DO NOTHING`,
+      [`set_${storeData.id}`, storeData.id, storeData.name || 'Kirana Store']
+    );
+
+    const planId = subscriptionData?.plan_id || 'plan_annual';
+    const startsAt = subscriptionData?.starts_at || new Date().toISOString();
+    const expiresAt = subscriptionData?.expires_at || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+    const subId = subscriptionData?.id || `sub_${storeData.id}`;
+
+    db.run(
+      `INSERT INTO subscriptions (id, store_id, plan_id, status, starts_at, expires_at)
+       VALUES (?, ?, ?, 'ACTIVE', ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         status = 'ACTIVE',
+         expires_at = excluded.expires_at`,
+      [subId, storeData.id, planId, startsAt, expiresAt]
+    );
+  } catch (err) {
+    console.warn('[KiranaOS Sync] SQLite store sync warning:', err.message);
+  }
+}
+
+/**
  * Syncs a MongoDB user document into the local SQLite users table.
- * This guarantees local disk storage foreign keys (sales, shifts, audit logs)
- * and joins continue to work seamlessly without disrupting offline-first local operation.
+ * Ensures the referenced store exists first so foreign keys never fail.
  */
 export function syncUserToSqlite(userDoc) {
   if (!userDoc || !userDoc.id || !userDoc.email) return;
@@ -70,6 +127,22 @@ export function syncUserToSqlite(userDoc) {
     const db = getDb();
     if (!db || typeof db.run !== 'function') return;
 
+    // 1. If user has store_id, ensure store exists in SQLite first
+    if (userDoc.store_id) {
+      const existingStore = db.get('SELECT id FROM stores WHERE id = ?', [userDoc.store_id]);
+      if (!existingStore) {
+        const storeData = userDoc.store_data || {
+          id: userDoc.store_id,
+          name: `${userDoc.full_name || 'Owner'}'s Store`,
+          slug: `store-${userDoc.store_id}`,
+          phone: userDoc.phone,
+          email: userDoc.email
+        };
+        syncStoreToSqlite(storeData, userDoc.subscription_data);
+      }
+    }
+
+    // 2. Insert or update user record
     db.run(
       `INSERT INTO users (id, store_id, email, password_hash, full_name, phone, role, is_active, must_change_password)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -141,6 +214,8 @@ export async function createMongoUser(userData) {
     role: userData.role, // SUPER_ADMIN, STORE_OWNER, STORE_MANAGER, CASHIER
     is_active: userData.is_active !== undefined ? (userData.is_active ? 1 : 0) : 1,
     must_change_password: userData.must_change_password ? 1 : 0,
+    store_data: userData.store_data || null,
+    subscription_data: userData.subscription_data || null,
     created_at: userData.created_at || new Date(),
     updated_at: new Date()
   };
