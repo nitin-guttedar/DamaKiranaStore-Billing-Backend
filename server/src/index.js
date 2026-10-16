@@ -23,9 +23,19 @@ import superAdminRoutes from './routes/superAdminRoutes.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize database schema safely
+import { seedDatabase } from './db/seed.js';
+
+// Initialize database schema and ensure initial demo dataset exists
 try {
   runMigrations();
+  const db = getDb();
+  if (db && typeof db.get === 'function') {
+    const usersCount = db.get('SELECT COUNT(*) as count FROM users')?.count || 0;
+    if (usersCount === 0) {
+      console.log('[KiranaOS DB] Database is empty. Auto-seeding initial store and users...');
+      await seedDatabase();
+    }
+  }
 } catch (err) {
   console.error('[KiranaOS DB] Database initialization warning:', err.message);
 }
