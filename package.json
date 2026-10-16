@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "damakiranastore-billing-backend",
   "version": "1.0.0",
   "description": "Dama Kirana Store - Offline-First Backend API, SQLite Database, & Cryptographic Licensing Engine",

@@ -35,9 +35,20 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Root Status API
 app.get('/', (req, res) => {
-  res.send('KiranaOS Backend Engine is running!');
+  res.json({
+    status: 'ok',
+    message: 'KiranaOS Backend Engine is running!',
+    system: 'DamaKiranaStore-Billing API',
+    version: '1.0.0',
+    mode: 'offline-first',
+    health: '/api/health',
+    timestamp: new Date().toISOString()
+  });
 });
+
 // Health Check API
 app.get('/api/health', (req, res) => {
   res.json({
