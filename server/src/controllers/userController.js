@@ -6,6 +6,7 @@ import {
   findMongoUserById,
   createMongoUser,
   updateMongoUser,
+  deleteMongoUser,
   listMongoUsers,
   syncUserToSqlite
 } from '../db/mongo.js';
@@ -211,31 +212,69 @@ export async function deleteUser(req, res) {
     const { id } = req.params;
     const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
 
-    if (id === req.user.userId) {
-      return res.status(400).json({ success: false, error: 'You cannot deactivate your own account.' });
-    }
-
     const db = getDb();
     const existing = db.get('SELECT * FROM users WHERE id = ?', [id]);
-    if (!existing) {
+
+    let userEmail = existing?.email;
+    let userRole = existing?.role;
+    let userStoreId = existing?.store_id;
+
+    // If not in SQLite, check MongoDB
+    if (!userEmail) {
+      try {
+        const mongoUser = await findMongoUserById(id);
+        if (mongoUser) {
+          userEmail = mongoUser.email;
+          userRole = mongoUser.role;
+          userStoreId = mongoUser.store_id;
+        }
+      } catch (e) {
+        console.warn('[KiranaOS Users] Mongo lookup warning:', e.message);
+      }
+    }
+
+    if (!userEmail) {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
-    if (!isSuperAdmin && existing.store_id !== req.user.storeId) {
+    // Safety 1: Cannot delete own logged-in account
+    if (id === req.user.userId || userEmail.toLowerCase() === req.user.email?.toLowerCase()) {
+      return res.status(400).json({ success: false, error: 'You cannot delete your own account.' });
+    }
+
+    // Safety 2: Protect primary Super Administrator
+    if (userRole === 'SUPER_ADMIN' || userEmail.toLowerCase() === 'nitinguttedar20@gmail.com') {
+      return res.status(403).json({ success: false, error: 'The primary Super Administrator account cannot be deleted.' });
+    }
+
+    // Safety 3: Store owner authorization
+    if (!isSuperAdmin && userStoreId !== req.user.storeId) {
       return res.status(403).json({ success: false, error: 'Access denied: User does not belong to your store.' });
     }
 
-    // Deactivate in MongoDB
+    // 1. Permanently delete from MongoDB Atlas
+    let mongoDeleted = false;
     try {
-      await updateMongoUser(id, { is_active: 0 });
-    } catch (e) {
-      console.warn('[KiranaOS Mongo] Deactivate warning:', e.message);
+      const delResult = await deleteMongoUser(id, userEmail);
+      mongoDeleted = delResult && delResult.deletedCount > 0;
+      console.log(`[KiranaOS Mongo] User deleted from MongoDB Atlas: ${userEmail} (${id})`);
+    } catch (err) {
+      console.error('[KiranaOS Mongo] Error deleting user from MongoDB Atlas:', err.message);
     }
 
-    // Deactivate in SQLite
-    db.run('UPDATE users SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
+    // 2. Permanently delete from SQLite
+    try {
+      db.run('DELETE FROM users WHERE id = ? OR email = ?', [id, userEmail]);
+      console.log(`[KiranaOS SQLite] User deleted from SQLite: ${userEmail}`);
+    } catch (err) {
+      console.warn('[KiranaOS SQLite] Error deleting user from SQLite:', err.message);
+    }
 
-    res.json({ success: true, message: 'User account deactivated successfully' });
+    res.json({
+      success: true,
+      message: `User ${userEmail} was permanently deleted from MongoDB Atlas and local storage.`,
+      deletedFromMongo: mongoDeleted
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

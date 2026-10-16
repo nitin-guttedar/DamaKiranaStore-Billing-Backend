@@ -266,6 +266,18 @@ export async function listMongoUsers(filter = {}) {
 }
 
 /**
+ * Permanently delete a user from MongoDB Atlas
+ */
+export async function deleteMongoUser(id, email = null) {
+  const col = await getUsersCollection();
+  const conditions = [];
+  if (id) conditions.push({ id });
+  if (email) conditions.push({ email: email.toLowerCase().trim() });
+  if (conditions.length === 0) return { deletedCount: 0 };
+  return col.deleteOne({ $or: conditions });
+}
+
+/**
  * Seed default credentials into MongoDB if collection is empty or users are missing
  */
 export async function seedMongoCredentials(seedUsers = []) {
