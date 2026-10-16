@@ -42,15 +42,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Root Status API
 app.get('/', (req, res) => {
-  res.json({
-    status: 'ok',
-    message: 'KiranaOS Backend Engine is running!',
-    system: 'DamaKiranaStore-Billing API',
-    version: '1.0.0',
-    mode: 'offline-first',
-    health: '/api/health',
-    timestamp: new Date().toISOString()
-  });
+  res.send('KiranaOS Backend Engine is running!');
 });
 
 // Health Check API
