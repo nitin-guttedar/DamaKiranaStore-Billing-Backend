@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { getDb } from '../db/index.js';
 import { AuthService } from '../services/authService.js';
 import { LicenseService } from '../services/licenseService.js';
+import { findMongoUserByEmail, createMongoUser } from '../db/mongo.js';
 
 export function getOverview(req, res) {
   const db = getDb();
@@ -107,8 +108,20 @@ export async function createStore(req, res) {
 
   const db = getDb();
 
-  // Check duplicate email
-  const existingUser = db.get('SELECT id FROM users WHERE email = ?', [ownerEmail.toLowerCase().trim()]);
+  const normalizedEmail = ownerEmail.toLowerCase().trim();
+
+  // Check duplicate email in MongoDB credentials collection
+  try {
+    const mongoExisting = await findMongoUserByEmail(normalizedEmail);
+    if (mongoExisting) {
+      return res.status(400).json({ success: false, error: 'A user with this email address already exists in MongoDB.' });
+    }
+  } catch (err) {
+    console.warn('[KiranaOS] Mongo duplicate check warning:', err.message);
+  }
+
+  // Check duplicate email in local SQLite
+  const existingUser = db.get('SELECT id FROM users WHERE email = ?', [normalizedEmail]);
   if (existingUser) {
     return res.status(400).json({ success: false, error: 'A user with this email address already exists.' });
   }
@@ -204,6 +217,24 @@ export async function createStore(req, res) {
       expiresAt: license.expiresAt
     };
   });
+
+  // Persist owner login credentials to MongoDB Atlas
+  try {
+    await createMongoUser({
+      id: ownerId,
+      store_id: storeId,
+      email: normalizedEmail,
+      password_hash: passwordHash,
+      full_name: ownerName.trim(),
+      phone: ownerPhone || null,
+      role: 'STORE_OWNER',
+      must_change_password: 1,
+      is_active: 1
+    });
+    console.log('[+] Persisted Store Owner login credentials to MongoDB Atlas:', normalizedEmail);
+  } catch (mongoErr) {
+    console.error('[KiranaOS] Warning: Failed to persist owner credentials to MongoDB:', mongoErr.message);
+  }
 
   res.status(201).json({ success: true, ...result });
 }

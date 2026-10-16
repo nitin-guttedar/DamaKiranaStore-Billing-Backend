@@ -19,11 +19,12 @@ import expenseRoutes from './routes/expenseRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
 import settingsRoutes from './routes/settingsRoutes.js';
 import superAdminRoutes from './routes/superAdminRoutes.js';
+import userRoutes from './routes/userRoutes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-import { seedDatabase } from './db/seed.js';
+import { seedDatabase, ensureDefaultMongoCredentials } from './db/seed.js';
 
 // Initialize database schema and ensure initial demo dataset exists
 try {
@@ -34,6 +35,9 @@ try {
     if (usersCount === 0) {
       console.log('[KiranaOS DB] Database is empty. Auto-seeding initial store and users...');
       await seedDatabase();
+    } else {
+      // Ensure cloud MongoDB credentials cluster is synced with default credentials
+      ensureDefaultMongoCredentials().catch(e => console.warn('[KiranaOS Mongo Sync]:', e.message));
     }
   }
 } catch (err) {
@@ -81,6 +85,7 @@ app.use('/api/expenses', expenseRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/super-admin', superAdminRoutes);
+app.use('/api/users', userRoutes);
 
 // Serve static client bundle if built (single-port offline retail deployment)
 const clientDistPath = path.resolve(__dirname, '../../client/dist');

@@ -39,5 +39,9 @@ export const config = {
     printerMode: process.env.DEFAULT_PRINTER_MODE || '58mm',
     invoicePrefix: process.env.DEFAULT_INVOICE_PREFIX || 'INV',
     currency: process.env.DEFAULT_CURRENCY || 'INR',
+  },
+  mongo: {
+    uri: process.env.MONGODB_URI || 'mongodb+srv://nitinguttedar2000_db_user:HGG8508QknPvcaEM@cluster0.w9ake35.mongodb.net/kiranaos?retryWrites=true&w=majority',
+    dbName: process.env.MONGODB_DB_NAME || 'kiranaos'
   }
 };

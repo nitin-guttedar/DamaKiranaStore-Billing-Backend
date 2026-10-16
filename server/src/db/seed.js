@@ -3,11 +3,56 @@ import { getDb } from './index.js';
 import { runMigrations } from './migrate.js';
 import { AuthService } from '../services/authService.js';
 import { LicenseService } from '../services/licenseService.js';
+import { seedMongoCredentials } from './mongo.js';
+
+export async function ensureDefaultMongoCredentials() {
+  try {
+    const adminPass = await AuthService.hashPassword('SuperAdmin@Kirana2026');
+    const ownerPass = await AuthService.hashPassword('KiranaOwner@123');
+    const cashierPass = await AuthService.hashPassword('Cashier@123');
+
+    await seedMongoCredentials([
+      {
+        id: 'usr_sa_primary',
+        store_id: null,
+        email: 'admin@kiranaos.internal',
+        password_hash: adminPass,
+        full_name: 'KiranaOS Super Admin',
+        phone: '9999999999',
+        role: 'SUPER_ADMIN',
+        must_change_password: 0
+      },
+      {
+        id: 'usr_owner_ramesh',
+        store_id: 'store_ganesh_kirana',
+        email: 'owner@ganeshkirana.com',
+        password_hash: ownerPass,
+        full_name: 'Ramesh Patel (Owner)',
+        phone: '9845012345',
+        role: 'STORE_OWNER',
+        must_change_password: 0
+      },
+      {
+        id: 'usr_cashier_suresh',
+        store_id: 'store_ganesh_kirana',
+        email: 'cashier@ganeshkirana.com',
+        password_hash: cashierPass,
+        full_name: 'Suresh Kumar (Cashier)',
+        phone: '9845098765',
+        role: 'CASHIER',
+        must_change_password: 0
+      }
+    ]);
+  } catch (err) {
+    console.warn('[KiranaOS DB] Could not sync default credentials to MongoDB:', err.message);
+  }
+}
 
 export async function seedDatabase() {
   runMigrations();
   const db = getDb();
   console.log('[KiranaOS DB] Seeding realistic Indian Kirana demo dataset...');
+  await ensureDefaultMongoCredentials();
 
   // 1. Subscription Plans
   const plans = [

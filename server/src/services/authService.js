@@ -3,6 +3,12 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { getDb } from '../db/index.js';
 import { config } from '../config/index.js';
+import {
+  findMongoUserByEmail,
+  findMongoUserById,
+  updateMongoPassword,
+  syncUserToSqlite
+} from '../db/mongo.js';
 
 export class AuthService {
   /**
@@ -39,25 +45,37 @@ export class AuthService {
 
   /**
    * Authenticate user with email and password
+   * Credentials checked against MongoDB Atlas cluster with local SQLite offline fallback
    */
   static async login(email, password) {
     const db = getDb();
-    const user = db.get('SELECT * FROM users WHERE email = ?', [email.toLowerCase().trim()]);
+    const normalizedEmail = email.toLowerCase().trim();
+
+    let user = null;
+    let fromMongo = false;
+
+    // 1. Primary check: Query MongoDB credentials collection
+    try {
+      const mongoUser = await findMongoUserByEmail(normalizedEmail);
+      if (mongoUser) {
+        user = mongoUser;
+        fromMongo = true;
+      }
+    } catch (err) {
+      console.warn('[KiranaOS Auth] MongoDB credential lookup warning, falling back to local storage:', err.message);
+    }
+
+    // 2. Offline fallback: Query local SQLite storage if not found in MongoDB
+    if (!user) {
+      user = db.get('SELECT * FROM users WHERE email = ?', [normalizedEmail]);
+    }
 
     if (!user) {
       throw new Error('Invalid email or password');
     }
 
-    if (user.is_active !== 1) {
+    if (user.is_active !== 1 && user.is_active !== true) {
       throw new Error('Your user account has been deactivated. Please contact support.');
-    }
-
-    // If store-associated, check if store is suspended
-    if (user.store_id) {
-      const store = db.get('SELECT status, is_active FROM stores WHERE id = ?', [user.store_id]);
-      if (!store || store.is_active !== 1 || store.status === 'SUSPENDED') {
-        throw new Error('This store is currently suspended. Access denied.');
-      }
     }
 
     const isMatch = await this.comparePassword(password, user.password_hash);
@@ -65,9 +83,22 @@ export class AuthService {
       throw new Error('Invalid email or password');
     }
 
+    // Mirror credential record to local SQLite so local FKs (sales, shifts) and bill printing succeed
+    if (fromMongo) {
+      syncUserToSqlite(user);
+    }
+
+    // If store-associated, check if store is suspended
+    if (user.store_id) {
+      const store = db.get('SELECT status, is_active FROM stores WHERE id = ?', [user.store_id]);
+      if (store && (store.is_active !== 1 || store.status === 'SUSPENDED')) {
+        throw new Error('This store is currently suspended. Access denied.');
+      }
+    }
+
     const token = this.generateToken(user);
 
-    // Fetch store info if available
+    // Fetch store info if available from local disk storage
     let store = null;
     if (user.store_id) {
       store = db.get('SELECT * FROM stores WHERE id = ?', [user.store_id]);
@@ -94,11 +125,23 @@ export class AuthService {
   }
 
   /**
-   * Change password for authenticated user
+   * Change password for authenticated user in MongoDB and SQLite
    */
   static async changePassword(userId, currentPassword, newPassword) {
     const db = getDb();
-    const user = db.get('SELECT * FROM users WHERE id = ?', [userId]);
+    let user = null;
+
+    // Check MongoDB first
+    try {
+      user = await findMongoUserById(userId);
+    } catch (e) {
+      // offline fallback
+    }
+
+    if (!user) {
+      user = db.get('SELECT * FROM users WHERE id = ?', [userId]);
+    }
+
     if (!user) throw new Error('User not found');
 
     const isMatch = await this.comparePassword(currentPassword, user.password_hash);
@@ -109,6 +152,15 @@ export class AuthService {
     }
 
     const newHash = await this.hashPassword(newPassword);
+
+    // Update in MongoDB
+    try {
+      await updateMongoPassword(userId, newHash);
+    } catch (e) {
+      console.warn('[KiranaOS Auth] Failed to update password in MongoDB:', e.message);
+    }
+
+    // Update in local SQLite
     db.run(
       'UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
       [newHash, userId]
@@ -119,3 +171,4 @@ export class AuthService {
 }
 
 export default AuthService;
+
