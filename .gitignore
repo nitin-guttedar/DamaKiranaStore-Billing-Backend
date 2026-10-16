@@ -1,0 +1,41 @@
+﻿# Dependencies
+node_modules/
+server/node_modules/
+package-lock.json.backup
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+server/.env
+server/.env.local
+
+# SQLite Database & Backups
+*.db
+*.db-shm
+*.db-wal
+server/data/*.db
+server/data/*.db-shm
+server/data/*.db-wal
+server/data/backups/*
+!server/data/.gitkeep
+!server/data/backups/.gitkeep
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

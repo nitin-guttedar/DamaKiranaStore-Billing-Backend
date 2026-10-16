@@ -1,0 +1,27 @@
+﻿{
+  "name": "damakiranastore-billing-backend",
+  "version": "1.0.0",
+  "description": "Dama Kirana Store - Offline-First Backend API, SQLite Database, & Cryptographic Licensing Engine",
+  "type": "module",
+  "scripts": {
+    "start": "cd server && npm start",
+    "dev": "cd server && npm run dev",
+    "db:migrate": "cd server && npm run db:migrate",
+    "db:seed": "cd server && npm run db:seed",
+    "bootstrap:admin": "cd server && npm run bootstrap:admin",
+    "db:backup": "cd server && npm run db:backup",
+    "db:restore": "cd server && npm run db:restore",
+    "test": "cd server && npm test"
+  },
+  "keywords": [
+    "pos",
+    "kirana",
+    "offline-first",
+    "backend",
+    "sqlite",
+    "express",
+    "api"
+  ],
+  "author": "nitin-guttedar",
+  "license": "ISC"
+}
