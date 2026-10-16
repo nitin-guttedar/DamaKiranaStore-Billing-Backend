@@ -23,8 +23,12 @@ import superAdminRoutes from './routes/superAdminRoutes.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize database schema
-runMigrations();
+// Initialize database schema safely
+try {
+  runMigrations();
+} catch (err) {
+  console.error('[KiranaOS DB] Database initialization warning:', err.message);
+}
 
 const app = express();
 

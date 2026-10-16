@@ -9,11 +9,17 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const isVercel = !!process.env.VERCEL;
-const defaultDb = isVercel ? '/tmp/kiranaos.db' : 'data/kiranaos.db';
-const rawDbPath = process.env.DB_PATH || defaultDb;
-const resolvedDbPath = path.isAbsolute(rawDbPath)
-  ? rawDbPath
-  : path.resolve(__dirname, '../../', rawDbPath);
+let resolvedDbPath;
+if (isVercel) {
+  resolvedDbPath = (process.env.DB_PATH && process.env.DB_PATH.startsWith('/tmp'))
+    ? process.env.DB_PATH
+    : '/tmp/kiranaos.db';
+} else {
+  const rawDbPath = process.env.DB_PATH || 'data/kiranaos.db';
+  resolvedDbPath = path.isAbsolute(rawDbPath)
+    ? rawDbPath
+    : path.resolve(__dirname, '../../', rawDbPath);
+}
 
 export const config = {
   port: parseInt(process.env.PORT || '5000', 10),

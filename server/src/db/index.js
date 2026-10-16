@@ -1,13 +1,41 @@
-import { DatabaseSync } from 'node:sqlite';
 import fs from 'fs';
 import path from 'path';
 import { config } from '../config/index.js';
+
+let DatabaseSync;
+try {
+  const sqlite = await import('node:sqlite');
+  DatabaseSync = sqlite.DatabaseSync;
+} catch (e) {
+  console.warn('[KiranaOS DB] Native node:sqlite not available in runtime:', process.version);
+}
 
 let dbInstance = null;
 let savepointDepth = 0;
 
 export function getDb() {
   if (dbInstance) return dbInstance;
+
+  if (!DatabaseSync) {
+    console.error(`[KiranaOS DB] DatabaseSync is unavailable in Node ${process.version}. Node.js 22.x is required.`);
+    // Return a safe mock/stub interface so startup and status routes never crash
+    return {
+      raw: null,
+      exec() {},
+      prepare() {
+        return {
+          all: () => [],
+          get: () => null,
+          run: () => ({ changes: 0 })
+        };
+      },
+      query() { return []; },
+      get() { return null; },
+      run() { return { changes: 0 }; },
+      transaction(fn) { return fn(this); },
+      close() {}
+    };
+  }
 
   // Ensure data directory exists
   const dbDir = path.dirname(config.dbPath);
@@ -19,9 +47,12 @@ export function getDb() {
 
   // Performance and safety pragmas
   rawDb.exec('PRAGMA foreign_keys = ON;');
-  rawDb.exec('PRAGMA journal_mode = WAL;');
   rawDb.exec('PRAGMA synchronous = NORMAL;');
   rawDb.exec('PRAGMA busy_timeout = 5000;');
+
+  if (!process.env.VERCEL) {
+    rawDb.exec('PRAGMA journal_mode = WAL;');
+  }
 
   dbInstance = {
     raw: rawDb,

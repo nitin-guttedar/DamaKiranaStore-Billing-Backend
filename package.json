@@ -24,7 +24,7 @@
     "zod": "^3.24.2"
   },
   "engines": {
-    "node": ">=22.x"
+    "node": "22.x"
   },
   "keywords": [
     "pos",
