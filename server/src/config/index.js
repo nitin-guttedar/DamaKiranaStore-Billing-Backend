@@ -8,10 +8,17 @@ const __dirname = path.dirname(__filename);
 // Load .env from server directory
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
+const isVercel = !!process.env.VERCEL;
+const defaultDb = isVercel ? '/tmp/kiranaos.db' : 'data/kiranaos.db';
+const rawDbPath = process.env.DB_PATH || defaultDb;
+const resolvedDbPath = path.isAbsolute(rawDbPath)
+  ? rawDbPath
+  : path.resolve(__dirname, '../../', rawDbPath);
+
 export const config = {
   port: parseInt(process.env.PORT || '5000', 10),
-  nodeEnv: process.env.NODE_ENV || 'development',
-  dbPath: path.resolve(__dirname, '../../', process.env.DB_PATH || 'data/kiranaos.db'),
+  nodeEnv: process.env.NODE_ENV || (isVercel ? 'production' : 'development'),
+  dbPath: resolvedDbPath,
   jwt: {
     secret: process.env.JWT_SECRET || 'kiranaos_super_jwt_secret_dev_key_2026_xyz987654321',
     expiresIn: process.env.JWT_EXPIRES_IN || '24h',

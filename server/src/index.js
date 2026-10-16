@@ -73,14 +73,16 @@ if (fs.existsSync(clientDistPath)) {
 // Centralized error handling
 app.use(errorHandler);
 
-// Start Server
-const server = app.listen(config.port, '0.0.0.0', () => {
-  console.log(`=======================================================`);
-  console.log(`  KiranaOS Backend Engine is running!`);
-  console.log(`  Local URL:   http://localhost:${config.port}`);
-  console.log(`  Health API:  http://localhost:${config.port}/api/health`);
-  console.log(`  Mode:        Offline-First Retail POS (SQLite WAL)`);
-  console.log(`=======================================================`);
-});
+// Start Server if not running in serverless environment (e.g. Vercel)
+if (!process.env.VERCEL) {
+  app.listen(config.port, '0.0.0.0', () => {
+    console.log(`=======================================================`);
+    console.log(`  KiranaOS Backend Engine is running!`);
+    console.log(`  Local URL:   http://localhost:${config.port}`);
+    console.log(`  Health API:  http://localhost:${config.port}/api/health`);
+    console.log(`  Mode:        Offline-First Retail POS (SQLite WAL)`);
+    console.log(`=======================================================`);
+  });
+}
 
 export default app;
