@@ -9,6 +9,7 @@ import {
   updateMongoPassword,
   syncUserToSqlite
 } from '../db/mongo.js';
+import { LicenseService } from './licenseService.js';
 
 export class AuthService {
   /**
