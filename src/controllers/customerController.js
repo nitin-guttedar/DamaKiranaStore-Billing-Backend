@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { getDb } from '../db/index.js';
+import { syncLocalDiskJson } from '../services/diskJsonBackup.js';
 
 export function getCustomers(req, res) {
   const storeId = req.user.storeId;
@@ -100,6 +101,7 @@ export function createCustomer(req, res) {
     });
 
     const created = db.get('SELECT * FROM customers WHERE id = ?', [customerId]);
+    syncLocalDiskJson(storeId);
     res.status(201).json({ success: true, customer: created });
   } catch (err) {
     console.error('[KiranaOS Customer] Create customer error:', err.message);
@@ -139,6 +141,7 @@ export function updateCustomer(req, res) {
   );
 
   const updated = db.get('SELECT * FROM customers WHERE id = ?', [id]);
+  syncLocalDiskJson(storeId);
   res.json({ success: true, customer: updated });
 }
 
@@ -231,6 +234,7 @@ export function recordRepayment(req, res) {
       };
     });
 
+    syncLocalDiskJson(storeId);
     res.json(result);
   } catch (err) {
     console.error('[KiranaOS Customer] Repayment error:', err.message);

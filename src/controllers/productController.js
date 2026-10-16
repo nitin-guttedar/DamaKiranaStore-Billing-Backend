@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { getDb } from '../db/index.js';
+import { syncLocalDiskJson } from '../services/diskJsonBackup.js';
 
 export function getProducts(req, res) {
   const storeId = req.user.storeId;
@@ -174,6 +175,7 @@ export function createProduct(req, res) {
        WHERE p.id = ?`,
       [productId]
     );
+    syncLocalDiskJson(storeId);
     res.status(201).json({ success: true, product: created });
   } catch (err) {
     console.error('[KiranaOS Product] Create product error:', err.message);
@@ -299,6 +301,7 @@ export function updateProduct(req, res) {
        WHERE p.id = ?`,
       [id]
     );
+    syncLocalDiskJson(storeId);
     res.json({ success: true, product: updated });
   } catch (err) {
     console.error('[KiranaOS Product] Update product error:', err.message);
@@ -351,6 +354,7 @@ export function adjustStock(req, res) {
   });
 
   const updated = db.get('SELECT * FROM products WHERE id = ?', [productId]);
+  syncLocalDiskJson(storeId);
   res.json({
     success: true,
     message: `Stock adjusted by ${qty > 0 ? '+' : ''}${qty} ${product.unit}`,

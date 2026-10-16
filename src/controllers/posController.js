@@ -1,5 +1,6 @@
 import { PosService } from '../services/posService.js';
 import { getDb } from '../db/index.js';
+import { syncLocalDiskJson } from '../services/diskJsonBackup.js';
 
 export function checkout(req, res) {
   try {
@@ -29,6 +30,7 @@ export function checkout(req, res) {
       offlineCreatedAt
     });
 
+    syncLocalDiskJson(storeId);
     res.status(201).json(receipt);
   } catch (err) {
     res.status(400).json({ success: false, error: err.message });
