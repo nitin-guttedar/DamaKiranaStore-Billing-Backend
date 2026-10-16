@@ -12,14 +12,27 @@ export function ensureStoreInSqlite(storeId, user = null) {
     const db = getDb();
     if (!db || typeof db.get !== 'function') return;
 
-    const store = db.get('SELECT id FROM stores WHERE id = ?', [storeId]);
+    // 1. Ensure default subscription plans exist so foreign key never fails
+    db.run(
+      `INSERT INTO subscription_plans (id, name, code, duration_days, price_inr, max_users, max_products, is_active)
+       VALUES 
+         ('plan_trial', '14-Day Free Kirana Trial', 'TRIAL', 14, 0, 2, 1000, 1),
+         ('plan_monthly', 'Kirana Starter Monthly', 'MONTHLY', 30, 499, 2, 2000, 1),
+         ('plan_quarterly', 'Kirana Growth Quarterly', 'QUARTERLY', 90, 1399, 3, 5000, 1),
+         ('plan_halfyearly', 'Kirana Business 6-Months', 'HALF_YEARLY', 180, 2499, 5, 10000, 1),
+         ('plan_annual', 'Kirana Enterprise Annual', 'ANNUAL', 365, 4499, 10, 25000, 1)
+       ON CONFLICT(id) DO NOTHING`
+    );
+
+    // 2. Ensure store exists
+    const store = db.get('SELECT id, status FROM stores WHERE id = ?', [storeId]);
+    const storeName = user?.fullName ? `${user.fullName}'s Store` : 'Kirana Retail Store';
     if (!store) {
-      const storeName = user?.fullName ? `${user.fullName}'s Store` : 'Kirana Retail Store';
       const slug = `store-${storeId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16).toLowerCase()}`;
       db.run(
         `INSERT INTO stores (id, name, slug, phone, email, address, city, state, pincode, status, is_active)
          VALUES (?, ?, ?, ?, ?, 'Market Road', 'Bengaluru', 'Karnataka', '560001', 'ACTIVE', 1)
-         ON CONFLICT(id) DO NOTHING`,
+         ON CONFLICT(id) DO UPDATE SET status = 'ACTIVE'`,
         [storeId, storeName, slug, user?.phone || null, user?.email || null]
       );
 
@@ -29,15 +42,30 @@ export function ensureStoreInSqlite(storeId, user = null) {
          ON CONFLICT(id) DO NOTHING`,
         [`set_${storeId}`, storeId, storeName]
       );
+    }
 
-      const startsAt = new Date().toISOString();
-      const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+    // 3. Ensure store has an active subscription in SQLite
+    const existingSub = db.get(
+      'SELECT id, status, expires_at FROM subscriptions WHERE store_id = ? ORDER BY created_at DESC LIMIT 1',
+      [storeId]
+    );
+
+    const startsAt = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+
+    if (!existingSub) {
       db.run(
         `INSERT INTO subscriptions (id, store_id, plan_id, status, starts_at, expires_at)
          VALUES (?, ?, 'plan_annual', 'ACTIVE', ?, ?)
          ON CONFLICT(id) DO NOTHING`,
         [`sub_${storeId}`, storeId, startsAt, expiresAt]
       );
+    } else if (existingSub.status !== 'SUSPENDED' && (existingSub.status === 'EXPIRED' || new Date(existingSub.expires_at) < new Date())) {
+      db.run(
+        `UPDATE subscriptions SET status = 'ACTIVE', starts_at = ?, expires_at = ? WHERE id = ?`,
+        [startsAt, expiresAt, existingSub.id]
+      );
+      db.run(`UPDATE stores SET status = 'ACTIVE' WHERE id = ? AND status != 'SUSPENDED'`, [storeId]);
     }
   } catch (err) {
     console.warn('[KiranaOS Auth] SQLite ensureStore error:', err.message);

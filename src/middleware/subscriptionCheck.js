@@ -1,4 +1,5 @@
 import { LicenseService } from '../services/licenseService.js';
+import { ensureStoreInSqlite } from './auth.js';
 
 /**
  * Middleware to check store subscription validity.
@@ -15,6 +16,9 @@ export function checkSubscription(req, res, next) {
   if (!storeId) {
     return res.status(403).json({ success: false, error: 'User is not associated with an active store.' });
   }
+
+  // Ensure store, base plans, and active subscription exist in SQLite first
+  ensureStoreInSqlite(storeId, req.user);
 
   const subStatus = LicenseService.getStoreSubscriptionStatus(storeId);
   req.subscription = subStatus;

@@ -62,6 +62,15 @@ export function runMigrations() {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
+    INSERT INTO subscription_plans (id, name, code, duration_days, price_inr, max_users, max_products, is_active)
+    VALUES 
+      ('plan_trial', '14-Day Free Kirana Trial', 'TRIAL', 14, 0, 2, 1000, 1),
+      ('plan_monthly', 'Kirana Starter Monthly', 'MONTHLY', 30, 499, 2, 2000, 1),
+      ('plan_quarterly', 'Kirana Growth Quarterly', 'QUARTERLY', 90, 1399, 3, 5000, 1),
+      ('plan_halfyearly', 'Kirana Business 6-Months', 'HALF_YEARLY', 180, 2499, 5, 10000, 1),
+      ('plan_annual', 'Kirana Enterprise Annual', 'ANNUAL', 365, 4499, 10, 25000, 1)
+    ON CONFLICT(id) DO NOTHING;
+
     -- 5. Subscriptions
     CREATE TABLE IF NOT EXISTS subscriptions (
       id TEXT PRIMARY KEY,
