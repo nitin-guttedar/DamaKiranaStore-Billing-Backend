@@ -7,18 +7,28 @@ export function getDashboardKpis(req, res) {
   const db = getDb();
 
   // Date range filter
-  let dateCondition = "date(s.created_at) = date('now', 'localtime')";
-  const params = [storeId];
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+  const yesterdayStr = new Date(now.getTime() - 86400000).toISOString().split('T')[0];
+  const sevenDaysStr = new Date(now.getTime() - 7 * 86400000).toISOString().split('T')[0];
+  const thirtyDaysStr = new Date(now.getTime() - 30 * 86400000).toISOString().split('T')[0];
+
+  let dateCondition = "substr(s.created_at, 1, 10) = ?";
+  const params = [storeId, todayStr];
 
   if (period === 'yesterday') {
-    dateCondition = "date(s.created_at) = date('now', '-1 day', 'localtime')";
+    dateCondition = "substr(s.created_at, 1, 10) = ?";
+    params[1] = yesterdayStr;
   } else if (period === '7days') {
-    dateCondition = "date(s.created_at) >= date('now', '-7 days', 'localtime')";
+    dateCondition = "substr(s.created_at, 1, 10) >= ?";
+    params[1] = sevenDaysStr;
   } else if (period === '30days') {
-    dateCondition = "date(s.created_at) >= date('now', '-30 days', 'localtime')";
+    dateCondition = "substr(s.created_at, 1, 10) >= ?";
+    params[1] = thirtyDaysStr;
   } else if (period === 'custom' && startDate && endDate) {
-    dateCondition = "date(s.created_at) >= date(?) AND date(s.created_at) <= date(?)";
-    params.push(startDate, endDate);
+    dateCondition = "substr(s.created_at, 1, 10) >= ? AND substr(s.created_at, 1, 10) <= ?";
+    params[1] = startDate;
+    params.push(endDate);
   }
 
   // 1. Sales & Bills Count
