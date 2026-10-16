@@ -8,7 +8,8 @@ import {
   updateMongoUser,
   deleteMongoUser,
   listMongoUsers,
-  syncUserToSqlite
+  syncUserToSqlite,
+  syncStoreToSqlite
 } from '../db/mongo.js';
 
 export async function listUsers(req, res) {
@@ -50,7 +51,8 @@ export async function createUser(req, res) {
   try {
     const { email, password, fullName, phone, role } = req.body;
     const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
-    const targetStoreId = isSuperAdmin ? (req.body.storeId || null) : req.user.storeId;
+    let targetStoreId = isSuperAdmin ? (req.body.storeId || null) : req.user.storeId;
+    let storeData = null;
 
     if (!email || !password || !fullName || !role) {
       return res.status(400).json({
@@ -71,6 +73,23 @@ export async function createUser(req, res) {
       }
       if (!targetStoreId) {
         return res.status(400).json({ success: false, error: 'Store context required for store staff users.' });
+      }
+    } else {
+      // If Super Admin creates a STORE_OWNER without selecting a store, auto-provision one
+      if (role === 'STORE_OWNER' && !targetStoreId) {
+        targetStoreId = `str_${crypto.randomUUID()}`;
+        storeData = {
+          id: targetStoreId,
+          name: `${fullName.trim()}'s Store`,
+          slug: `store-${targetStoreId.slice(-6)}`,
+          phone: phone || null,
+          email: email.toLowerCase().trim(),
+          address: 'Market Road',
+          city: 'Bengaluru',
+          state: 'Karnataka',
+          pincode: '560001'
+        };
+        syncStoreToSqlite(storeData);
       }
     }
 
@@ -110,7 +129,8 @@ export async function createUser(req, res) {
       phone: phone || null,
       role,
       is_active: 1,
-      must_change_password: 0
+      must_change_password: 0,
+      store_data: storeData
     };
 
     try {

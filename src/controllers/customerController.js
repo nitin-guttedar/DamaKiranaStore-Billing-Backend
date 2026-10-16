@@ -49,6 +49,10 @@ export function getCustomerById(req, res) {
 
 export function createCustomer(req, res) {
   const storeId = req.user.storeId;
+  if (!storeId) {
+    return res.status(400).json({ success: false, error: 'Store context required' });
+  }
+
   const { name, phone, email, address, creditLimit = 5000, initialBalance = 0 } = req.body;
 
   if (!name || !name.trim()) {
@@ -56,37 +60,51 @@ export function createCustomer(req, res) {
   }
 
   const db = getDb();
+
+  // If customer with same phone already exists in this store, return existing
+  if (phone && phone.trim()) {
+    const existing = db.get('SELECT * FROM customers WHERE store_id = ? AND phone = ? AND is_active = 1', [storeId, phone.trim()]);
+    if (existing) {
+      return res.status(200).json({ success: true, customer: existing, message: 'Customer already exists with this phone number' });
+    }
+  }
+
   const customerId = `cust_${crypto.randomUUID()}`;
   const parsedLimit = parseFloat(creditLimit) || 5000;
   const parsedBalance = parseFloat(initialBalance) || 0;
 
-  db.transaction((tx) => {
-    tx.run(
-      `INSERT INTO customers (id, store_id, name, phone, email, address, credit_limit, outstanding_balance, is_active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      [
-        customerId,
-        storeId,
-        name.trim(),
-        phone ? phone.trim() : null,
-        email ? email.trim() : null,
-        address ? address.trim() : null,
-        parsedLimit,
-        parsedBalance
-      ]
-    );
-
-    if (parsedBalance > 0) {
+  try {
+    db.transaction((tx) => {
       tx.run(
-        `INSERT INTO customer_ledger (id, store_id, customer_id, entry_type, amount, running_balance, reference_type, notes, created_by)
-         VALUES (?, ?, ?, 'CREDIT_SALE', ?, ?, 'OPENING_BALANCE', 'Opening Udhaar balance', ?)`,
-        [`led_${crypto.randomUUID()}`, storeId, customerId, parsedBalance, parsedBalance, req.user.userId]
+        `INSERT INTO customers (id, store_id, name, phone, email, address, credit_limit, outstanding_balance, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [
+          customerId,
+          storeId,
+          name.trim(),
+          phone ? phone.trim() : null,
+          email ? email.trim() : null,
+          address ? address.trim() : null,
+          parsedLimit,
+          parsedBalance
+        ]
       );
-    }
-  });
 
-  const created = db.get('SELECT * FROM customers WHERE id = ?', [customerId]);
-  res.status(201).json({ success: true, customer: created });
+      if (parsedBalance > 0) {
+        tx.run(
+          `INSERT INTO customer_ledger (id, store_id, customer_id, entry_type, amount, running_balance, reference_type, notes, created_by)
+           VALUES (?, ?, ?, 'CREDIT_SALE', ?, ?, 'OPENING_BALANCE', 'Opening Udhaar balance', ?)`,
+          [`led_${crypto.randomUUID()}`, storeId, customerId, parsedBalance, parsedBalance, req.user?.userId || null]
+        );
+      }
+    });
+
+    const created = db.get('SELECT * FROM customers WHERE id = ?', [customerId]);
+    res.status(201).json({ success: true, customer: created });
+  } catch (err) {
+    console.error('[KiranaOS Customer] Create customer error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
 }
 
 export function updateCustomer(req, res) {
@@ -136,81 +154,86 @@ export function recordRepayment(req, res) {
 
   const db = getDb();
 
-  const result = db.transaction((tx) => {
-    const customer = tx.get('SELECT * FROM customers WHERE id = ? AND store_id = ?', [id, storeId]);
-    if (!customer) throw new Error('Customer not found.');
+  try {
+    const result = db.transaction((tx) => {
+      const customer = tx.get('SELECT * FROM customers WHERE id = ? AND store_id = ?', [id, storeId]);
+      if (!customer) throw new Error('Customer not found.');
 
-    const newBalance = Math.max(0, (customer.outstanding_balance || 0) - repayAmount);
-    const receiptNumber = `REC-${Date.now().toString().slice(-6)}`;
+      const newBalance = Math.max(0, (customer.outstanding_balance || 0) - repayAmount);
+      const receiptNumber = `REC-${Date.now().toString().slice(-6)}`;
 
-    // Update customer balance
-    tx.run('UPDATE customers SET outstanding_balance = ? WHERE id = ?', [newBalance, id]);
+      // Update customer balance
+      tx.run('UPDATE customers SET outstanding_balance = ? WHERE id = ?', [newBalance, id]);
 
-    // Insert customer ledger entry
-    const ledgerId = `led_${crypto.randomUUID()}`;
-    tx.run(
-      `INSERT INTO customer_ledger (id, store_id, customer_id, entry_type, amount, running_balance, reference_type, reference_id, notes, created_by)
-       VALUES (?, ?, ?, 'PAYMENT_RECEIVED', ?, ?, 'REPAYMENT', ?, ?, ?)`,
-      [
-        ledgerId,
-        storeId,
-        id,
-        repayAmount,
-        newBalance,
-        receiptNumber,
-        notes || `Udhaar repayment via ${paymentMethod}`,
-        req.user.userId
-      ]
-    );
-
-    // Record payment entry
-    tx.run(
-      `INSERT INTO payments (id, store_id, customer_id, payment_method, amount, reference_id, notes, status, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?)`,
-      [
-        `pay_${crypto.randomUUID()}`,
-        storeId,
-        id,
-        paymentMethod,
-        repayAmount,
-        referenceId || receiptNumber,
-        notes || 'Customer udhaar repayment',
-        req.user.userId
-      ]
-    );
-
-    // If shift is active and cash received
-    if (paymentMethod === 'CASH') {
-      const activeShift = tx.get(
-        `SELECT id FROM cashier_shifts WHERE store_id = ? AND cashier_id = ? AND status = 'OPEN'`,
-        [storeId, req.user.userId]
+      // Insert customer ledger entry
+      const ledgerId = `led_${crypto.randomUUID()}`;
+      tx.run(
+        `INSERT INTO customer_ledger (id, store_id, customer_id, entry_type, amount, running_balance, reference_type, reference_id, notes, created_by)
+         VALUES (?, ?, ?, 'PAYMENT_RECEIVED', ?, ?, 'REPAYMENT', ?, ?, ?)`,
+        [
+          ledgerId,
+          storeId,
+          id,
+          repayAmount,
+          newBalance,
+          receiptNumber,
+          notes || `Udhaar repayment via ${paymentMethod}`,
+          req.user?.userId || null
+        ]
       );
-      if (activeShift) {
-        tx.run(
-          'UPDATE cashier_shifts SET cash_sales = cash_sales + ? WHERE id = ?',
-          [repayAmount, activeShift.id]
+
+      // Record payment entry
+      tx.run(
+        `INSERT INTO payments (id, store_id, customer_id, payment_method, amount, reference_id, notes, status, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?)`,
+        [
+          `pay_${crypto.randomUUID()}`,
+          storeId,
+          id,
+          paymentMethod,
+          repayAmount,
+          referenceId || receiptNumber,
+          notes || 'Customer udhaar repayment',
+          req.user?.userId || null
+        ]
+      );
+
+      // If shift is active and cash received
+      if (paymentMethod === 'CASH') {
+        const activeShift = tx.get(
+          `SELECT id FROM cashier_shifts WHERE store_id = ? AND cashier_id = ? AND status = 'OPEN'`,
+          [storeId, req.user?.userId || '']
         );
+        if (activeShift) {
+          tx.run(
+            'UPDATE cashier_shifts SET cash_sales = cash_sales + ? WHERE id = ?',
+            [repayAmount, activeShift.id]
+          );
+        }
       }
-    }
 
-    const store = tx.get('SELECT name, phone FROM stores WHERE id = ?', [storeId]);
+      const store = tx.get('SELECT name, phone FROM stores WHERE id = ?', [storeId]) || { name: 'Kirana Store' };
 
-    // Generate WhatsApp reminder text
-    const waText = encodeURIComponent(
-      `Dear ${customer.name}, we received payment of ₹${repayAmount.toFixed(2)} at ${store.name}. Your remaining udhaar balance is ₹${newBalance.toFixed(2)}. Thank you!`
-    );
-    const waLink = customer.phone ? `https://wa.me/91${customer.phone.replace(/[^0-9]/g, '')}?text=${waText}` : null;
+      // Generate WhatsApp reminder text
+      const waText = encodeURIComponent(
+        `Dear ${customer.name}, we received payment of ₹${repayAmount.toFixed(2)} at ${store.name}. Your remaining udhaar balance is ₹${newBalance.toFixed(2)}. Thank you!`
+      );
+      const waLink = customer.phone ? `https://wa.me/91${customer.phone.replace(/[^0-9]/g, '')}?text=${waText}` : null;
 
-    return {
-      success: true,
-      receiptNumber,
-      paidAmount: repayAmount,
-      previousBalance: customer.outstanding_balance,
-      newBalance,
-      customerName: customer.name,
-      whatsAppReminderLink: waLink
-    };
-  });
+      return {
+        success: true,
+        receiptNumber,
+        paidAmount: repayAmount,
+        previousBalance: customer.outstanding_balance,
+        newBalance,
+        customerName: customer.name,
+        whatsAppReminderLink: waLink
+      };
+    });
 
-  res.json(result);
+    res.json(result);
+  } catch (err) {
+    console.error('[KiranaOS Customer] Repayment error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
 }

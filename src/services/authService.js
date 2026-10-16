@@ -7,7 +7,8 @@ import {
   findMongoUserByEmail,
   findMongoUserById,
   updateMongoPassword,
-  syncUserToSqlite
+  syncUserToSqlite,
+  syncStoreToSqlite
 } from '../db/mongo.js';
 import { LicenseService } from './licenseService.js';
 
@@ -84,14 +85,28 @@ export class AuthService {
       throw new Error('Invalid email or password');
     }
 
-    // Mirror credential record to local SQLite so local FKs (sales, shifts) and bill printing succeed
+    // Mirror credential and store record to local SQLite so local FKs (sales, shifts) and bill printing succeed
     if (fromMongo) {
+      if (user.store_data) {
+        syncStoreToSqlite(user.store_data, user.subscription_data);
+      }
       syncUserToSqlite(user);
     }
 
-    // If store-associated, check if store is suspended
+    // Ensure store exists in SQLite if user has store_id
     if (user.store_id) {
-      const store = db.get('SELECT status, is_active FROM stores WHERE id = ?', [user.store_id]);
+      let store = db.get('SELECT id, status, is_active FROM stores WHERE id = ?', [user.store_id]);
+      if (!store) {
+        const storeData = user.store_data || {
+          id: user.store_id,
+          name: `${user.full_name || 'Owner'}'s Store`,
+          slug: `store-${user.store_id}`,
+          phone: user.phone,
+          email: user.email
+        };
+        syncStoreToSqlite(storeData, user.subscription_data);
+        store = db.get('SELECT id, status, is_active FROM stores WHERE id = ?', [user.store_id]);
+      }
       if (store && (store.is_active !== 1 || store.status === 'SUSPENDED')) {
         throw new Error('This store is currently suspended. Access denied.');
       }

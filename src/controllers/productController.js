@@ -62,6 +62,10 @@ export function getProductByBarcode(req, res) {
 
 export function createProduct(req, res) {
   const storeId = req.user.storeId;
+  if (!storeId) {
+    return res.status(400).json({ success: false, error: 'Store context required' });
+  }
+
   const {
     name,
     sku,
@@ -101,54 +105,80 @@ export function createProduct(req, res) {
     }
   }
 
+  // Safe category verification (prevent foreign key violation)
+  let cleanCategoryId = null;
+  if (categoryId && typeof categoryId === 'string' && categoryId.trim()) {
+    const cat = db.get('SELECT id FROM categories WHERE id = ? AND store_id = ?', [categoryId.trim(), storeId]);
+    if (cat) cleanCategoryId = cat.id;
+  }
+
+  // Safe supplier verification (prevent foreign key violation)
+  let cleanSupplierId = null;
+  if (supplierId && typeof supplierId === 'string' && supplierId.trim()) {
+    const sup = db.get('SELECT id FROM suppliers WHERE id = ? AND store_id = ?', [supplierId.trim(), storeId]);
+    if (sup) cleanSupplierId = sup.id;
+  }
+
   const productId = `prd_${crypto.randomUUID()}`;
   const parsedCost = parseFloat(purchaseCost) || 0;
   const parsedPrice = parseFloat(sellingPrice);
   const parsedMrp = parseFloat(mrp);
   const parsedStock = parseFloat(stockQuantity) || 0;
 
-  db.transaction((tx) => {
-    tx.run(
-      `INSERT INTO products (
-        id, store_id, category_id, supplier_id, name, sku, barcode, brand, unit,
-        purchase_cost, selling_price, mrp, stock_quantity, reorder_threshold,
-        hsn_code, tax_rate, is_loose_weight, expiry_date, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      [
-        productId,
-        storeId,
-        categoryId || null,
-        supplierId || null,
-        name.trim(),
-        sku ? sku.trim() : null,
-        barcode ? barcode.trim() : null,
-        brand ? brand.trim() : null,
-        unit,
-        parsedCost,
-        parsedPrice,
-        parsedMrp,
-        parsedStock,
-        parseFloat(reorderThreshold) || 10,
-        hsnCode,
-        parseFloat(taxRate) || 0,
-        isLooseWeight ? 1 : 0,
-        expiryDate || null
-      ]
-    );
-
-    // If opening stock > 0, log movement
-    if (parsedStock > 0) {
+  try {
+    db.transaction((tx) => {
       tx.run(
-        `INSERT INTO stock_movements (
-          id, store_id, product_id, movement_type, quantity, unit_cost, reference_type, reason, created_by
-        ) VALUES (?, ?, ?, 'OPENING', ?, ?, 'INITIAL_ENTRY', 'Initial opening stock entry', ?)`,
-        [`mov_${crypto.randomUUID()}`, storeId, productId, parsedStock, parsedCost, req.user.userId]
+        `INSERT INTO products (
+          id, store_id, category_id, supplier_id, name, sku, barcode, brand, unit,
+          purchase_cost, selling_price, mrp, stock_quantity, reorder_threshold,
+          hsn_code, tax_rate, is_loose_weight, expiry_date, is_active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [
+          productId,
+          storeId,
+          cleanCategoryId,
+          cleanSupplierId,
+          name.trim(),
+          sku ? sku.trim() : null,
+          barcode ? barcode.trim() : null,
+          brand ? brand.trim() : null,
+          unit,
+          parsedCost,
+          parsedPrice,
+          parsedMrp,
+          parsedStock,
+          parseFloat(reorderThreshold) || 10,
+          hsnCode,
+          parseFloat(taxRate) || 0,
+          isLooseWeight ? 1 : 0,
+          expiryDate || null
+        ]
       );
-    }
-  });
 
-  const created = db.get('SELECT * FROM products WHERE id = ?', [productId]);
-  res.status(201).json({ success: true, product: created });
+      // If opening stock > 0, log movement
+      if (parsedStock > 0) {
+        tx.run(
+          `INSERT INTO stock_movements (
+            id, store_id, product_id, movement_type, quantity, unit_cost, reference_type, reason, created_by
+          ) VALUES (?, ?, ?, 'OPENING', ?, ?, 'INITIAL_ENTRY', 'Initial opening stock entry', ?)`,
+          [`mov_${crypto.randomUUID()}`, storeId, productId, parsedStock, parsedCost, req.user?.userId || null]
+        );
+      }
+    });
+
+    const created = db.get(
+      `SELECT p.*, c.name as category_name, s.name as supplier_name
+       FROM products p
+       LEFT JOIN categories c ON p.category_id = c.id
+       LEFT JOIN suppliers s ON p.supplier_id = s.id
+       WHERE p.id = ?`,
+      [productId]
+    );
+    res.status(201).json({ success: true, product: created });
+  } catch (err) {
+    console.error('[KiranaOS Product] Create product error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
 }
 
 export function updateProduct(req, res) {
@@ -180,6 +210,28 @@ export function updateProduct(req, res) {
     expiryDate
   } = req.body;
 
+  // Safe category verification
+  let cleanCategoryId = undefined;
+  if (categoryId !== undefined) {
+    if (categoryId && typeof categoryId === 'string' && categoryId.trim()) {
+      const cat = db.get('SELECT id FROM categories WHERE id = ? AND store_id = ?', [categoryId.trim(), storeId]);
+      cleanCategoryId = cat ? cat.id : null;
+    } else {
+      cleanCategoryId = null;
+    }
+  }
+
+  // Safe supplier verification
+  let cleanSupplierId = undefined;
+  if (supplierId !== undefined) {
+    if (supplierId && typeof supplierId === 'string' && supplierId.trim()) {
+      const sup = db.get('SELECT id FROM suppliers WHERE id = ? AND store_id = ?', [supplierId.trim(), storeId]);
+      cleanSupplierId = sup ? sup.id : null;
+    } else {
+      cleanSupplierId = null;
+    }
+  }
+
   // Validate duplicate barcode if changed
   if (barcode && barcode.trim() !== product.barcode) {
     const duplicate = db.get(
@@ -194,50 +246,64 @@ export function updateProduct(req, res) {
     }
   }
 
-  db.run(
-    `UPDATE products SET
-      name = COALESCE(?, name),
-      sku = COALESCE(?, sku),
-      barcode = COALESCE(?, barcode),
-      category_id = COALESCE(?, category_id),
-      supplier_id = COALESCE(?, supplier_id),
-      brand = COALESCE(?, brand),
-      unit = COALESCE(?, unit),
-      purchase_cost = COALESCE(?, purchase_cost),
-      selling_price = COALESCE(?, selling_price),
-      mrp = COALESCE(?, mrp),
-      reorder_threshold = COALESCE(?, reorder_threshold),
-      hsn_code = COALESCE(?, hsn_code),
-      tax_rate = COALESCE(?, tax_rate),
-      is_loose_weight = COALESCE(?, is_loose_weight),
-      is_active = COALESCE(?, is_active),
-      expiry_date = COALESCE(?, expiry_date),
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND store_id = ?`,
-    [
-      name !== undefined ? name.trim() : null,
-      sku !== undefined ? (sku ? sku.trim() : null) : null,
-      barcode !== undefined ? (barcode ? barcode.trim() : null) : null,
-      categoryId !== undefined ? (categoryId || null) : null,
-      supplierId !== undefined ? (supplierId || null) : null,
-      brand !== undefined ? (brand ? brand.trim() : null) : null,
-      unit !== undefined ? unit : null,
-      purchaseCost !== undefined ? parseFloat(purchaseCost) : null,
-      sellingPrice !== undefined ? parseFloat(sellingPrice) : null,
-      mrp !== undefined ? parseFloat(mrp) : null,
-      reorderThreshold !== undefined ? parseFloat(reorderThreshold) : null,
-      hsnCode !== undefined ? hsnCode : null,
-      taxRate !== undefined ? parseFloat(taxRate) : null,
-      isLooseWeight !== undefined ? (isLooseWeight ? 1 : 0) : null,
-      isActive !== undefined ? (isActive ? 1 : 0) : null,
-      expiryDate !== undefined ? (expiryDate || null) : null,
-      id,
-      storeId
-    ]
-  );
+  try {
+    db.run(
+      `UPDATE products SET
+        name = COALESCE(?, name),
+        sku = COALESCE(?, sku),
+        barcode = COALESCE(?, barcode),
+        category_id = CASE WHEN ? = 1 THEN ? ELSE category_id END,
+        supplier_id = CASE WHEN ? = 1 THEN ? ELSE supplier_id END,
+        brand = COALESCE(?, brand),
+        unit = COALESCE(?, unit),
+        purchase_cost = COALESCE(?, purchase_cost),
+        selling_price = COALESCE(?, selling_price),
+        mrp = COALESCE(?, mrp),
+        reorder_threshold = COALESCE(?, reorder_threshold),
+        hsn_code = COALESCE(?, hsn_code),
+        tax_rate = COALESCE(?, tax_rate),
+        is_loose_weight = COALESCE(?, is_loose_weight),
+        is_active = COALESCE(?, is_active),
+        expiry_date = COALESCE(?, expiry_date),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND store_id = ?`,
+      [
+        name !== undefined ? name.trim() : null,
+        sku !== undefined ? (sku ? sku.trim() : null) : null,
+        barcode !== undefined ? (barcode ? barcode.trim() : null) : null,
+        cleanCategoryId !== undefined ? 1 : 0,
+        cleanCategoryId !== undefined ? cleanCategoryId : null,
+        cleanSupplierId !== undefined ? 1 : 0,
+        cleanSupplierId !== undefined ? cleanSupplierId : null,
+        brand !== undefined ? (brand ? brand.trim() : null) : null,
+        unit !== undefined ? unit : null,
+        purchaseCost !== undefined ? parseFloat(purchaseCost) : null,
+        sellingPrice !== undefined ? parseFloat(sellingPrice) : null,
+        mrp !== undefined ? parseFloat(mrp) : null,
+        reorderThreshold !== undefined ? parseFloat(reorderThreshold) : null,
+        hsnCode !== undefined ? hsnCode : null,
+        taxRate !== undefined ? parseFloat(taxRate) : null,
+        isLooseWeight !== undefined ? (isLooseWeight ? 1 : 0) : null,
+        isActive !== undefined ? (isActive ? 1 : 0) : null,
+        expiryDate !== undefined ? (expiryDate || null) : null,
+        id,
+        storeId
+      ]
+    );
 
-  const updated = db.get('SELECT * FROM products WHERE id = ?', [id]);
-  res.json({ success: true, product: updated });
+    const updated = db.get(
+      `SELECT p.*, c.name as category_name, s.name as supplier_name
+       FROM products p
+       LEFT JOIN categories c ON p.category_id = c.id
+       LEFT JOIN suppliers s ON p.supplier_id = s.id
+       WHERE p.id = ?`,
+      [id]
+    );
+    res.json({ success: true, product: updated });
+  } catch (err) {
+    console.error('[KiranaOS Product] Update product error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
 }
 
 export function adjustStock(req, res) {
@@ -332,10 +398,39 @@ export function exportCsv(req, res) {
 export function getCategories(req, res) {
   const storeId = req.user.storeId;
   const db = getDb();
-  const categories = db.query(
+  let categories = db.query(
     'SELECT * FROM categories WHERE store_id = ? AND is_active = 1 ORDER BY name ASC',
     [storeId]
   );
+
+  // If store has 0 categories, auto-seed default retail categories
+  if (!categories || categories.length === 0) {
+    const defaultCats = [
+      { name: 'General / FMCG', desc: 'General Kirana products and commodities' },
+      { name: 'Groceries & Staples', desc: 'Rice, wheat, atta, pulses, sugar, oil' },
+      { name: 'Snacks & Biscuits', desc: 'Chips, biscuits, namkeen, confectionery' },
+      { name: 'Beverages & Soft Drinks', desc: 'Tea, coffee, soft drinks, juices' },
+      { name: 'Dairy & Milk', desc: 'Milk, curd, butter, ghee, paneer' },
+      { name: 'Personal Care & Cleaning', desc: 'Soaps, detergents, shampoo, toothpaste' }
+    ];
+
+    try {
+      for (const dc of defaultCats) {
+        const catId = `cat_${crypto.randomUUID().slice(0, 8)}_${storeId.replace(/[^a-zA-Z0-9]/g, '').slice(-6)}`;
+        db.run(
+          'INSERT INTO categories (id, store_id, name, description, is_active) VALUES (?, ?, ?, ?, 1) ON CONFLICT(id) DO NOTHING',
+          [catId, storeId, dc.name, dc.desc]
+        );
+      }
+      categories = db.query(
+        'SELECT * FROM categories WHERE store_id = ? AND is_active = 1 ORDER BY name ASC',
+        [storeId]
+      );
+    } catch (e) {
+      console.warn('Auto-seed categories warning:', e.message);
+    }
+  }
+
   res.json({ success: true, categories });
 }
 
